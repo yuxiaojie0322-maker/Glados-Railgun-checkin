@@ -48,6 +48,16 @@
 
 - 添加1个`repository secret`，命名为`PUSHDEER_SENDKEY`，其值对应 PushDeer key: ([获取地址](https://www.pushdeer.com/product.html))。
 
+
+5. Telegram 推送通知（可选）
+
+- 添加 2 个 `repository secret`：
+  - `TG_BOT_TOKEN`：Telegram 机器人的 Token（通过 [@BotFather](https://t.me/BotFather) 创建获取，例如 `123456789:ABCdefGHI...`）
+  - `TG_USER_ID`：您的 Telegram 账号数字 ID（通过 [@userinfobot](https://t.me/userinfobot) 获取，例如 `123456789`）
+  - `TG_API_HOST`：（可选，自建反代域名，默认留空即使用官方 `api.telegram.org`）
+
+> 工作流已配置自动清理机制：每次运行完毕后仅保留最新 1 条工作流历史记录。
+
 ### **star**自己的仓库
 
 ![图片加载失败](imgs/4.png)

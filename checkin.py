@@ -97,6 +97,9 @@ class Config:
     """应用配置"""
 
     ENV_PUSH_KEY = "PUSHDEER_SENDKEY"
+    ENV_TG_BOT_TOKEN = "TG_BOT_TOKEN"
+    ENV_TG_USER_ID = "TG_USER_ID"
+    ENV_TG_API_HOST = "TG_API_HOST"
     ENV_COOKIES = "GLADOS_COOKIES"
     ENV_EXCHANGE_PLAN = "GLADOS_EXCHANGE_PLAN"
     ENV_VERBOSE = "GLADOS_VERBOSE"
@@ -119,6 +122,9 @@ class Config:
 
     def __init__(self):
         self.push_key: str = ""
+        self.tg_bot_token: str = ""
+        self.tg_user_id: str = ""
+        self.tg_api_host: str = ""
         self.cookies_list: List[str] = []
         self.exchange_plan: str = self.DEFAULT_EXCHANGE_PLAN
         self.verbose: bool = self.DEFAULT_VERBOSE
@@ -127,6 +133,9 @@ class Config:
     def _load_config(self) -> None:
         """加载配置"""
         push_key_env: Optional[str] = os.environ.get(self.ENV_PUSH_KEY)
+        self.tg_bot_token = os.environ.get(self.ENV_TG_BOT_TOKEN, "").strip()
+        self.tg_user_id = os.environ.get(self.ENV_TG_USER_ID, os.environ.get("TG_CHAT_ID", "")).strip()
+        self.tg_api_host = os.environ.get(self.ENV_TG_API_HOST, "api.telegram.org").strip()
         raw_cookies_env: Optional[str] = os.environ.get(self.ENV_COOKIES)
         exchange_plan_env: Optional[str] = os.environ.get(self.ENV_EXCHANGE_PLAN)
         verbose_env: Optional[str] = os.environ.get(self.ENV_VERBOSE)
@@ -158,6 +167,7 @@ class Config:
 
         logger.info(f"{LogEmoji.INFO} 共加载了 {len(self.cookies_list)} 个 Cookie 用于签到。")
         logger.info(f"{LogEmoji.INFO} 当前 {self.ENV_PUSH_KEY} {'已设置' if push_key_env else '未设置'}。")
+        logger.info(f"{LogEmoji.INFO} 当前 Telegram 推送: {'已配置' if (self.tg_bot_token and self.tg_user_id) else '未配置'}。")
         logger.info(f"{LogEmoji.INFO} 当前 {self.ENV_EXCHANGE_PLAN}: {self.exchange_plan}。")
 
         if verbose_env is not None:
@@ -451,25 +461,74 @@ class CheckinResult:
 
 
 class PushService:
-    """推送服务"""
+    """推送服务，支持 PushDeer 与 Telegram"""
 
     def __init__(self, config: Config):
         self.config = config
 
-    def send(self, title: str, content: str) -> bool:
-        """发送推送"""
-        if not self.config.push_key:
-            logger.info(f"{LogEmoji.WARNING} 未设置推送密钥，跳过推送通知。")
+    def _send_pushdeer(self, title: str, content: str) -> bool:
+        if not self.config or not self.config.push_key:
             return False
-
         try:
             pushdeer = PushDeer(pushkey=self.config.push_key)
             pushdeer.send_text(title, desp=content)
-            logger.info(f"{LogEmoji.SUCCESS} 推送通知发送成功。")
+            logger.info(f"{LogEmoji.SUCCESS} PushDeer 推送成功。")
             return True
         except Exception as e:
-            logger.error(f"{LogEmoji.ERROR} 发送推送通知失败: {e}")
+            logger.error(f"{LogEmoji.ERROR} PushDeer 发送推送通知失败: {e}")
             return False
+
+    def _send_telegram(self, title: str, content: str) -> bool:
+        if not self.config or not self.config.tg_bot_token or not self.config.tg_user_id:
+            return False
+        try:
+            api_host = self.config.tg_api_host or "api.telegram.org"
+            url = f"https://{api_host}/bot{self.config.tg_bot_token}/sendMessage"
+            text = f"*{title}*\n\n{content}"
+            payload = {
+                "chat_id": self.config.tg_user_id,
+                "text": text,
+                "parse_mode": "Markdown"
+            }
+            resp = requests.post(url, json=payload, timeout=15)
+            res_data = resp.json()
+            if res_data.get("ok"):
+                logger.info(f"{LogEmoji.SUCCESS} Telegram 推送成功。")
+                return True
+            else:
+                # Markdown 格式若解析失败则回退至纯文本重试
+                payload.pop("parse_mode", None)
+                payload["text"] = f"{title}\n\n{content}"
+                retry_resp = requests.post(url, json=payload, timeout=15)
+                if retry_resp.json().get("ok"):
+                    logger.info(f"{LogEmoji.SUCCESS} Telegram 纯文本推送成功。")
+                    return True
+                logger.error(f"{LogEmoji.ERROR} Telegram 推送失败: {res_data.get('description')}")
+                return False
+        except Exception as e:
+            logger.error(f"{LogEmoji.ERROR} Telegram 发送推送通知异常: {e}")
+            return False
+
+    def send(self, title: str, content: str) -> bool:
+        """发送推送（支持多渠道同时触发）"""
+        has_channel = False
+        success = False
+
+        if self.config and self.config.push_key:
+            has_channel = True
+            if self._send_pushdeer(title, content):
+                success = True
+
+        if self.config and self.config.tg_bot_token and self.config.tg_user_id:
+            has_channel = True
+            if self._send_telegram(title, content):
+                success = True
+
+        if not has_channel:
+            logger.info(f"{LogEmoji.WARNING} 未设置任何推送凭据 (PushDeer / Telegram)，跳过推送通知。")
+            return False
+
+        return success
 
 
 class Checker:
